@@ -1,0 +1,113 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Message Relay - Token Ring</title>
+    <link rel="stylesheet" href="styles.css" />
+  </head>
+  <body>
+    <div class="container">
+      <header>
+        <h1>🎯 Message Relay - Token Ring Algorithm</h1>
+        <div class="node-info">
+          <span class="node-badge" id="nodeIdBadge">Node ?</span>
+          <span class="token-status" id="tokenStatus"
+            >⏳ Waiting for token...</span
+          >
+        </div>
+      </header>
+
+      <div class="main-content">
+        <!-- Ring Visualization -->
+        <section class="ring-section">
+          <h2>Ring Topology</h2>
+          <div class="ring-container">
+            <svg id="ringSvg" width="400" height="400" viewBox="0 0 400 400">
+              <!-- Ring will be drawn here by JavaScript -->
+            </svg>
+          </div>
+          <div class="ring-legend">
+            <div class="legend-item">
+              <span class="legend-color active"></span>
+              <span>Active Node</span>
+            </div>
+            <div class="legend-item">
+              <span class="legend-color has-token"></span>
+              <span>Has Token</span>
+            </div>
+            <div class="legend-item">
+              <span class="legend-color current"></span>
+              <span>This Node</span>
+            </div>
+            <div class="legend-item">
+              <span class="legend-color inactive"></span>
+              <span>Disconnected</span>
+            </div>
+          </div>
+        </section>
+
+        <!-- Message Panel -->
+        <section class="message-section">
+          <h2>Send Message</h2>
+          <div class="send-message-panel">
+            <div class="form-group">
+              <label for="recipientSelect">Recipient:</label>
+              <select id="recipientSelect" disabled>
+                <option value="">-- Select recipient --</option>
+              </select>
+            </div>
+            <div class="form-group">
+              <label for="messageInput">Message:</label>
+              <textarea
+                id="messageInput"
+                placeholder="Type your message here..."
+                rows="3"
+                disabled
+              ></textarea>
+            </div>
+            <button id="sendButton" class="btn btn-primary" disabled>
+              📤 Send Message
+            </button>
+            <div id="sendStatus" class="send-status"></div>
+          </div>
+
+          <h2>Message Log</h2>
+          <div class="message-log" id="messageLog">
+            <p class="no-messages">
+              No messages yet. Send a message when you receive the token!
+            </p>
+          </div>
+        </section>
+      </div>
+
+      <!-- Status Bar -->
+      <footer class="status-bar">
+        <div class="status-item">
+          <span class="status-label">Connected Peers:</span>
+          <span id="connectedPeers" class="status-value">0</span>
+        </div>
+        <div class="status-item">
+          <span class="status-label">Messages Sent:</span>
+          <span id="messagesSent" class="status-value">0</span>
+        </div>
+        <div class="status-item">
+          <span class="status-label">Messages Received:</span>
+          <span id="messagesReceived" class="status-value">0</span>
+        </div>
+        <div class="status-item">
+          <span class="status-label">Queued:</span>
+          <span id="queuedMessages" class="status-value">0</span>
+        </div>
+        <div class="status-item">
+          <span class="status-label">Connection:</span>
+          <span id="connectionStatus" class="status-value status-disconnected"
+            >Connecting...</span
+          >
+        </div>
+      </footer>
+    </div>
+
+    <script src="app.js"></script>
+  </body>
+</html>

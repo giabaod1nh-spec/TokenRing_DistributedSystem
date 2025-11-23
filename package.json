@@ -1,0 +1,24 @@
+{
+  "name": "message-relay",
+  "version": "1.0.0",
+  "description": "Token Ring Algorithm demonstration - Message Relay app for distributed systems",
+  "main": "src/index.js",
+  "scripts": {
+    "start": "node src/index.js",
+    "dev": "nodemon src/index.js"
+  },
+  "keywords": [
+    "token-ring",
+    "distributed-systems",
+    "message-relay"
+  ],
+  "author": "",
+  "license": "MIT",
+  "dependencies": {
+    "ws": "^8.14.2",
+    "express": "^4.18.2"
+  },
+  "devDependencies": {
+    "nodemon": "^3.0.1"
+  }
+}
