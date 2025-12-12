@@ -13,16 +13,26 @@ class TokenRingNode extends EventEmitter {
     this.port = config.port;
     this.peers = config.peers || [];
     this.tokenTimeout = config.tokenTimeout || 5000; // 5 seconds
+    this.tokenAckTimeoutMs = config.tokenAckTimeoutMs || 3000;
+    this.tokenLossThresholdMs =
+      config.tokenLossThresholdMs || this.tokenTimeout * 3;
     this.isInitialTokenHolder = config.isInitialTokenHolder || false;
+    this.heartbeatIntervalMs = config.heartbeatIntervalMs || 2000;
+    this.heartbeatTimeoutMs = config.heartbeatTimeoutMs || 7000;
 
     // Token Ring state
     this.hasToken = false;
     this.tokenTimeoutId = null;
+    this.pendingToken = null; // { id, toNodeId, timeoutId }
+    this.lastTokenSeenAt = Date.now();
 
     // Network connections
     this.server = null;
     this.connections = new Map(); // nodeId -> WebSocket
     this.reconnectIntervals = new Map(); // nodeId -> interval ID
+    this.heartbeatIntervalId = null;
+    this.heartbeatCheckIntervalId = null;
+    this.tokenWatchdogIntervalId = null;
 
     // Message queue
     this.messageQueue = [];
@@ -30,6 +40,7 @@ class TokenRingNode extends EventEmitter {
     // Ring topology
     this.ringOrder = this._buildRingOrder();
     this.activeNodes = new Set(this.ringOrder);
+    this.lastHeartbeat = new Map(); // nodeId -> timestamp
 
     // Statistics
     this.stats = {
@@ -89,6 +100,10 @@ class TokenRingNode extends EventEmitter {
 
     // Connect to peers
     await this._connectToPeers();
+
+    // Begin heartbeats and watchdog timers
+    this._startHeartbeatLoops();
+    this._startTokenWatchdog();
 
     // If this is the initial token holder, start the token circulation
     if (this.isInitialTokenHolder) {
@@ -175,6 +190,8 @@ class TokenRingNode extends EventEmitter {
         console.log(`[Node ${this.nodeId}] Connected to Node ${peer.nodeId}`);
         this.connections.set(peer.nodeId, ws);
         this.activeNodes.add(peer.nodeId);
+        this.lastHeartbeat.set(peer.nodeId, Date.now());
+        this.lastHeartbeat.set(this.nodeId, Date.now());
 
         // Send handshake
         this._sendToPeer(peer.nodeId, {
@@ -236,6 +253,7 @@ class TokenRingNode extends EventEmitter {
   _handlePeerDisconnect(nodeId) {
     this.connections.delete(nodeId);
     this.activeNodes.delete(nodeId);
+    this.lastHeartbeat.delete(nodeId);
     this.emit("peer-disconnected", nodeId);
 
     console.log(
@@ -274,6 +292,9 @@ class TokenRingNode extends EventEmitter {
       case "heartbeat":
         this._handleHeartbeat(message);
         break;
+      case "token-ack":
+        this._handleTokenAck(message);
+        break;
       default:
         console.log(
           `[Node ${this.nodeId}] Unknown message type:`,
@@ -306,6 +327,16 @@ class TokenRingNode extends EventEmitter {
       `[Node ${this.nodeId}] 🎫 TOKEN RECEIVED from Node ${message.from}`
     );
     this.stats.tokensReceived++;
+    this.lastTokenSeenAt = Date.now();
+
+    // Ack token receipt so sender knows the token is safe
+    this._sendToPeer(message.from, {
+      type: "token-ack",
+      tokenId: message.tokenId,
+      from: this.nodeId,
+      timestamp: Date.now(),
+    });
+
     this._receiveToken();
   }
 
@@ -314,6 +345,7 @@ class TokenRingNode extends EventEmitter {
    */
   _receiveToken() {
     this.hasToken = true;
+    this.lastTokenSeenAt = Date.now();
     this.emit("token-received");
 
     // Process any queued messages
@@ -346,14 +378,19 @@ class TokenRingNode extends EventEmitter {
     }
 
     console.log(`[Node ${this.nodeId}] 🎫 PASSING TOKEN to Node ${nextNode}`);
+    const tokenId = `${Date.now()}-${this.nodeId}-${Math.floor(
+      Math.random() * 100000
+    )}`;
+
+    this.lastTokenSeenAt = Date.now();
 
     this._sendToPeer(nextNode, {
       type: "token",
       from: this.nodeId,
+      tokenId,
       timestamp: Date.now(),
     });
 
-    this.hasToken = false;
     this.stats.tokensPassed++;
 
     if (this.tokenTimeoutId) {
@@ -361,6 +398,13 @@ class TokenRingNode extends EventEmitter {
       this.tokenTimeoutId = null;
     }
 
+    // Wait for ack; if lost, watchdog will recreate the token later
+    const timeoutId = setTimeout(() => {
+      this._handleTokenAckTimeout(nextNode, tokenId);
+    }, this.tokenAckTimeoutMs);
+
+    this.pendingToken = { id: tokenId, toNodeId: nextNode, timeoutId };
+    this.hasToken = false;
     this.emit("token-passed", nextNode);
   }
 
@@ -429,6 +473,153 @@ class TokenRingNode extends EventEmitter {
       this.activeNodes.add(message.from);
       console.log(`[Node ${this.nodeId}] Node ${message.from} is back online`);
     }
+    this.lastHeartbeat.set(message.from, Date.now());
+  }
+
+  /**
+   * Handle token ack from peer
+   */
+  _handleTokenAck(message) {
+    if (!this.pendingToken || message.tokenId !== this.pendingToken.id) {
+      return;
+    }
+
+    console.log(
+      `[Node ${this.nodeId}] ✅ Token ack received from Node ${message.from}`
+    );
+
+    clearTimeout(this.pendingToken.timeoutId);
+    this.pendingToken = null;
+  }
+
+  /**
+   * Token ack timed out - mark node inactive and rely on watchdog to recover
+   */
+  _handleTokenAckTimeout(nodeId, tokenId) {
+    if (!this.pendingToken || this.pendingToken.id !== tokenId) {
+      return;
+    }
+
+    console.warn(
+      `[Node ${this.nodeId}] Token ack from Node ${nodeId} timed out`
+    );
+
+    this.pendingToken = null;
+    this._markNodeInactive(nodeId);
+  }
+
+  /**
+   * Mark a node as inactive and try to reconnect
+   */
+  _markNodeInactive(nodeId) {
+    if (this.connections.has(nodeId)) {
+      try {
+        this.connections.get(nodeId).close();
+      } catch (_) {}
+      this.connections.delete(nodeId);
+    }
+    this.activeNodes.delete(nodeId);
+    this.lastHeartbeat.delete(nodeId);
+    this.emit("peer-disconnected", nodeId);
+    console.log(`[Node ${this.nodeId}] Marked Node ${nodeId} inactive`);
+
+    // Schedule reconnect if we have peer info
+    const peer = this.peers.find((p) => p.nodeId === nodeId);
+    if (peer) {
+      this._scheduleReconnect(peer);
+    }
+  }
+
+  /**
+   * Start heartbeat send/prune loops
+   */
+  _startHeartbeatLoops() {
+    this.lastHeartbeat.set(this.nodeId, Date.now());
+    if (this.heartbeatIntervalId) {
+      clearInterval(this.heartbeatIntervalId);
+    }
+    if (this.heartbeatCheckIntervalId) {
+      clearInterval(this.heartbeatCheckIntervalId);
+    }
+
+    this.heartbeatIntervalId = setInterval(
+      () => this._sendHeartbeats(),
+      this.heartbeatIntervalMs
+    );
+    this.heartbeatCheckIntervalId = setInterval(
+      () => this._pruneHeartbeats(),
+      this.heartbeatIntervalMs
+    );
+  }
+
+  /**
+   * Send heartbeat to all connected peers
+   */
+  _sendHeartbeats() {
+    for (const peerId of this.connections.keys()) {
+      this._sendToPeer(peerId, {
+        type: "heartbeat",
+        from: this.nodeId,
+        timestamp: Date.now(),
+      });
+    }
+    this.lastHeartbeat.set(this.nodeId, Date.now());
+  }
+
+  /**
+   * Remove peers that have missed heartbeats
+   */
+  _pruneHeartbeats() {
+    const now = Date.now();
+    for (const nodeId of [...this.activeNodes]) {
+      if (nodeId === this.nodeId) continue;
+      const lastBeat = this.lastHeartbeat.get(nodeId) || 0;
+      if (now - lastBeat > this.heartbeatTimeoutMs) {
+        console.warn(
+          `[Node ${this.nodeId}] Heartbeat timeout for Node ${nodeId}`
+        );
+        this._markNodeInactive(nodeId);
+      }
+    }
+  }
+
+  /**
+   * Watchdog for token loss - recreate token if coordinator and no token seen
+   */
+  _startTokenWatchdog() {
+    if (this.tokenWatchdogIntervalId) {
+      clearInterval(this.tokenWatchdogIntervalId);
+    }
+
+    this.tokenWatchdogIntervalId = setInterval(
+      () => this._checkTokenLoss(),
+      this.tokenTimeout
+    );
+  }
+
+  _checkTokenLoss() {
+    if (this.hasToken || this.pendingToken) {
+      return;
+    }
+
+    const now = Date.now();
+    if (now - this.lastTokenSeenAt < this.tokenLossThresholdMs) {
+      return;
+    }
+
+    if (!this._amCoordinator()) {
+      return;
+    }
+
+    console.warn(
+      `[Node ${this.nodeId}] Token not seen for ${this.tokenLossThresholdMs}ms, regenerating`
+    );
+    this._receiveToken();
+    this.lastTokenSeenAt = Date.now();
+  }
+
+  _amCoordinator() {
+    return this.nodeId === Math.min(...this.ringOrder);
   }
 
   /**
@@ -467,6 +658,7 @@ class TokenRingNode extends EventEmitter {
       connectedPeers: Array.from(this.connections.keys()),
       queuedMessages: this.messageQueue.length,
       stats: this.stats,
+      lastTokenSeenAt: this.lastTokenSeenAt,
     };
   }
 
@@ -479,6 +671,18 @@ class TokenRingNode extends EventEmitter {
     // Clear timeouts
     if (this.tokenTimeoutId) {
       clearTimeout(this.tokenTimeoutId);
+    }
+    if (this.pendingToken?.timeoutId) {
+      clearTimeout(this.pendingToken.timeoutId);
+    }
+    if (this.heartbeatIntervalId) {
+      clearInterval(this.heartbeatIntervalId);
+    }
+    if (this.heartbeatCheckIntervalId) {
+      clearInterval(this.heartbeatCheckIntervalId);
+    }
+    if (this.tokenWatchdogIntervalId) {
+      clearInterval(this.tokenWatchdogIntervalId);
     }
 
     // Clear reconnect intervals
