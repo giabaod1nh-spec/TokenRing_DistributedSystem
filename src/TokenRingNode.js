@@ -12,21 +12,30 @@ class TokenRingNode extends EventEmitter {
     this.nodeId = config.nodeId;
     this.port = config.port;
     this.peers = config.peers || [];
+<<<<<<< HEAD
     this.tokenTimeout = config.tokenTimeout || 10000; // 5 seconds
+=======
+    this.tokenTimeout = config.tokenTimeout || 5000; // default 5s
+>>>>>>> 2ad335a9af52aa7bf7929c3d01a1eda8c76d2176
     this.tokenAckTimeoutMs = config.tokenAckTimeoutMs || 3000;
     this.tokenLossThresholdMs =
       config.tokenLossThresholdMs || this.tokenTimeout * 3;
     this.isInitialTokenHolder = config.isInitialTokenHolder || false;
     this.heartbeatIntervalMs = config.heartbeatIntervalMs || 2000;
-    this.heartbeatTimeoutMs = config.heartbeatTimeoutMs || 7000;
+    this.heartbeatTimeoutMs = config.heartbeatTimeoutMs || 30000;
 
     // Token Ring state
     this.hasToken = false;
     this.tokenTimeoutId = null;
     this.pendingToken = null; // { id, toNodeId, timeoutId }
+<<<<<<< HEAD
     this.lastTokenSeenAt = 0; // Initialize to 0 so we know token hasn't been seen yet
     this.lastKnownTokenHolder = null; // Track which node has the token
     this.tokenEverSeen = false; // Track if we've ever seen the token
+=======
+    this.lastTokenSeenAt = Date.now();
+    this.lastTokenHolder = null;
+>>>>>>> 2ad335a9af52aa7bf7929c3d01a1eda8c76d2176
 
     // Network connections
     this.server = null;
@@ -263,6 +272,7 @@ class TokenRingNode extends EventEmitter {
       Array.from(this.activeNodes)
     );
 
+<<<<<<< HEAD
     // Check if we need to regenerate token after peer disconnect
     if (!this.hasToken && !this.pendingToken) {
       const disconnectedNodeHadToken = this.lastKnownTokenHolder === nodeId;
@@ -310,6 +320,30 @@ class TokenRingNode extends EventEmitter {
             }
           }, 3000); // Slightly longer delay for coordinator fallback
         }
+=======
+    // Check if the disconnected node was holding the token
+    // The NEXT node (successor) after the failed node will regenerate the token
+    if (
+      this.lastKnownTokenHolder === nodeId &&
+      !this.hasToken &&
+      !this.pendingToken
+    ) {
+      console.warn(
+        `[Node ${this.nodeId}] ⚠️ Node ${nodeId} (token holder) disconnected!`
+      );
+
+      // Check if we are the successor (next node) of the failed node
+      if (this._amSuccessorOf(nodeId)) {
+        console.log(
+          `[Node ${this.nodeId}] 🔄 I am successor of failed node ${nodeId}, regenerating token`
+        );
+        // Small delay to ensure network state is updated
+        setTimeout(() => {
+          if (!this.hasToken && !this.pendingToken) {
+            this._receiveToken();
+          }
+        }, 1000);
+>>>>>>> 2ad335a9af52aa7bf7929c3d01a1eda8c76d2176
       }
     }
   }
@@ -450,7 +484,11 @@ class TokenRingNode extends EventEmitter {
     );
     this.stats.tokensReceived++;
     this.lastTokenSeenAt = Date.now();
+<<<<<<< HEAD
     this.tokenEverSeen = true;
+=======
+    this.lastTokenHolder = message.from;
+>>>>>>> 2ad335a9af52aa7bf7929c3d01a1eda8c76d2176
 
     // Ack token receipt so sender knows the token is safe
     this._sendToPeer(message.from, {
@@ -469,8 +507,12 @@ class TokenRingNode extends EventEmitter {
   _receiveToken() {
     this.hasToken = true;
     this.lastTokenSeenAt = Date.now();
+<<<<<<< HEAD
     this.lastKnownTokenHolder = this.nodeId; // We now hold the token
     this.tokenEverSeen = true;
+=======
+    this.lastTokenHolder = this.nodeId;
+>>>>>>> 2ad335a9af52aa7bf7929c3d01a1eda8c76d2176
     this.emit("token-received");
 
     // Broadcast to all peers that we now have the token
@@ -526,7 +568,11 @@ class TokenRingNode extends EventEmitter {
     )}`;
 
     this.lastTokenSeenAt = Date.now();
+<<<<<<< HEAD
     this.lastKnownTokenHolder = nextNode; // Token is being passed to next node
+=======
+    this.lastTokenHolder = this.nodeId;
+>>>>>>> 2ad335a9af52aa7bf7929c3d01a1eda8c76d2176
 
     this._sendToPeer(nextNode, {
       type: "token",
@@ -796,6 +842,7 @@ class TokenRingNode extends EventEmitter {
       return;
     }
 
+<<<<<<< HEAD
     // If we know who had the token last, only successor regenerates
     // Otherwise fall back to coordinator
     let shouldRegenerate = false;
@@ -817,11 +864,34 @@ class TokenRingNode extends EventEmitter {
     }
 
     console.warn(`[Node ${this.nodeId}] ${reason}, regenerating`);
+=======
+    const regenCandidate = this._nextActiveAfter(this.lastTokenHolder);
+    if (regenCandidate !== this.nodeId) {
+      return;
+    }
+
+    console.warn(
+      `[Node ${this.nodeId}] Token not seen for ${this.tokenLossThresholdMs}ms, regenerating as successor`
+    );
+>>>>>>> 2ad335a9af52aa7bf7929c3d01a1eda8c76d2176
     this._receiveToken();
   }
 
-  _amCoordinator() {
-    return this.nodeId === Math.min(...this.ringOrder);
+  _nextActiveAfter(nodeId) {
+    if (!nodeId || !this.ringOrder.includes(nodeId)) {
+      return Math.min(...this.ringOrder);
+    }
+
+    const sorted = [...this.ringOrder];
+    const startIdx = sorted.indexOf(nodeId);
+    for (let i = 1; i <= sorted.length; i++) {
+      const idx = (startIdx + i) % sorted.length;
+      const candidate = sorted[idx];
+      if (this.activeNodes.has(candidate)) {
+        return candidate;
+      }
+    }
+    return nodeId;
   }
 
   /**
