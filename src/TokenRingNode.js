@@ -262,10 +262,29 @@ class TokenRingNode extends EventEmitter {
       Array.from(this.activeNodes)
     );
 
-    // If we had the token and were waiting for next node, pass it now
-    if (this.hasToken && this.tokenTimeoutId) {
-      clearTimeout(this.tokenTimeoutId);
-      this._passToken();
+    // Check if the disconnected node was holding the token
+    // The NEXT node (successor) after the failed node will regenerate the token
+    if (
+      this.lastKnownTokenHolder === nodeId &&
+      !this.hasToken &&
+      !this.pendingToken
+    ) {
+      console.warn(
+        `[Node ${this.nodeId}] ⚠️ Node ${nodeId} (token holder) disconnected!`
+      );
+
+      // Check if we are the successor (next node) of the failed node
+      if (this._amSuccessorOf(nodeId)) {
+        console.log(
+          `[Node ${this.nodeId}] 🔄 I am successor of failed node ${nodeId}, regenerating token`
+        );
+        // Small delay to ensure network state is updated
+        setTimeout(() => {
+          if (!this.hasToken && !this.pendingToken) {
+            this._receiveToken();
+          }
+        }, 1000);
+      }
     }
   }
 
