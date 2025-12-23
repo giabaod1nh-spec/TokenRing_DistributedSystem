@@ -1,11 +1,11 @@
 {
   "nodeId": 4,
   "port": 3004,
-  "tokenTimeout": 10000,
+  "tokenTimeout": 30000,
   "peers": [
     {
       "nodeId": 1,
-      "host": "10.169.5.61",
+      "host": "10.189.82.166",
       "port": 3001
     },
     {

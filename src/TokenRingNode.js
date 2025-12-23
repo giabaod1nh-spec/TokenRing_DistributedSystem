@@ -12,19 +12,20 @@ class TokenRingNode extends EventEmitter {
     this.nodeId = config.nodeId;
     this.port = config.port;
     this.peers = config.peers || [];
-    this.tokenTimeout = config.tokenTimeout || 5000; // 5 seconds
+    this.tokenTimeout = config.tokenTimeout || 5000; // default 5s
     this.tokenAckTimeoutMs = config.tokenAckTimeoutMs || 3000;
     this.tokenLossThresholdMs =
       config.tokenLossThresholdMs || this.tokenTimeout * 3;
     this.isInitialTokenHolder = config.isInitialTokenHolder || false;
     this.heartbeatIntervalMs = config.heartbeatIntervalMs || 2000;
-    this.heartbeatTimeoutMs = config.heartbeatTimeoutMs || 7000;
+    this.heartbeatTimeoutMs = config.heartbeatTimeoutMs || 30000;
 
     // Token Ring state
     this.hasToken = false;
     this.tokenTimeoutId = null;
     this.pendingToken = null; // { id, toNodeId, timeoutId }
     this.lastTokenSeenAt = Date.now();
+    this.lastTokenHolder = null;
 
     // Network connections
     this.server = null;
@@ -328,6 +329,7 @@ class TokenRingNode extends EventEmitter {
     );
     this.stats.tokensReceived++;
     this.lastTokenSeenAt = Date.now();
+    this.lastTokenHolder = message.from;
 
     // Ack token receipt so sender knows the token is safe
     this._sendToPeer(message.from, {
@@ -346,6 +348,7 @@ class TokenRingNode extends EventEmitter {
   _receiveToken() {
     this.hasToken = true;
     this.lastTokenSeenAt = Date.now();
+    this.lastTokenHolder = this.nodeId;
     this.emit("token-received");
 
     // Process any queued messages
@@ -383,6 +386,7 @@ class TokenRingNode extends EventEmitter {
     )}`;
 
     this.lastTokenSeenAt = Date.now();
+    this.lastTokenHolder = this.nodeId;
 
     this._sendToPeer(nextNode, {
       type: "token",
@@ -607,19 +611,33 @@ class TokenRingNode extends EventEmitter {
       return;
     }
 
-    if (!this._amCoordinator()) {
+    const regenCandidate = this._nextActiveAfter(this.lastTokenHolder);
+    if (regenCandidate !== this.nodeId) {
       return;
     }
 
     console.warn(
-      `[Node ${this.nodeId}] Token not seen for ${this.tokenLossThresholdMs}ms, regenerating`
+      `[Node ${this.nodeId}] Token not seen for ${this.tokenLossThresholdMs}ms, regenerating as successor`
     );
     this._receiveToken();
     this.lastTokenSeenAt = Date.now();
   }
 
-  _amCoordinator() {
-    return this.nodeId === Math.min(...this.ringOrder);
+  _nextActiveAfter(nodeId) {
+    if (!nodeId || !this.ringOrder.includes(nodeId)) {
+      return Math.min(...this.ringOrder);
+    }
+
+    const sorted = [...this.ringOrder];
+    const startIdx = sorted.indexOf(nodeId);
+    for (let i = 1; i <= sorted.length; i++) {
+      const idx = (startIdx + i) % sorted.length;
+      const candidate = sorted[idx];
+      if (this.activeNodes.has(candidate)) {
+        return candidate;
+      }
+    }
+    return nodeId;
   }
 
   /**
