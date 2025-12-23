@@ -1,4 +1,14 @@
 {
+<<<<<<< HEAD
+  "nodeId": 1,
+  "port": 3001,
+  "tokenTimeout": 30000,
+  "peers": [
+    {
+      "nodeId": 4,
+      "host": "10.218.80.195",
+      "port": 3004
+=======
   "nodeId": 4,
   "port": 3004,
   "tokenTimeout": 30000,
@@ -7,6 +17,7 @@
       "nodeId": 1,
       "host": "10.218.80.166",
       "port": 3001
+>>>>>>> 2ad335a9af52aa7bf7929c3d01a1eda8c76d2176
     },
     {
       "nodeId": 2,
@@ -19,5 +30,5 @@
       "port": 3003
     }
   ],
-  "isInitialTokenHolder": false
+  "isInitialTokenHolder": true
 }

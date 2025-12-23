@@ -12,7 +12,11 @@ class TokenRingNode extends EventEmitter {
     this.nodeId = config.nodeId;
     this.port = config.port;
     this.peers = config.peers || [];
+<<<<<<< HEAD
+    this.tokenTimeout = config.tokenTimeout || 10000; // 5 seconds
+=======
     this.tokenTimeout = config.tokenTimeout || 5000; // default 5s
+>>>>>>> 2ad335a9af52aa7bf7929c3d01a1eda8c76d2176
     this.tokenAckTimeoutMs = config.tokenAckTimeoutMs || 3000;
     this.tokenLossThresholdMs =
       config.tokenLossThresholdMs || this.tokenTimeout * 3;
@@ -24,8 +28,14 @@ class TokenRingNode extends EventEmitter {
     this.hasToken = false;
     this.tokenTimeoutId = null;
     this.pendingToken = null; // { id, toNodeId, timeoutId }
+<<<<<<< HEAD
+    this.lastTokenSeenAt = 0; // Initialize to 0 so we know token hasn't been seen yet
+    this.lastKnownTokenHolder = null; // Track which node has the token
+    this.tokenEverSeen = false; // Track if we've ever seen the token
+=======
     this.lastTokenSeenAt = Date.now();
     this.lastTokenHolder = null;
+>>>>>>> 2ad335a9af52aa7bf7929c3d01a1eda8c76d2176
 
     // Network connections
     this.server = null;
@@ -262,6 +272,55 @@ class TokenRingNode extends EventEmitter {
       Array.from(this.activeNodes)
     );
 
+<<<<<<< HEAD
+    // Check if we need to regenerate token after peer disconnect
+    if (!this.hasToken && !this.pendingToken) {
+      const disconnectedNodeHadToken = this.lastKnownTokenHolder === nodeId;
+      const disconnectedWasCoordinator = nodeId === Math.min(...this.ringOrder);
+      const tokenNeverSeen = !this.tokenEverSeen;
+      
+      console.log(
+        `[Node ${this.nodeId}] Checking token status - lastKnownHolder: ${this.lastKnownTokenHolder}, disconnected: ${nodeId}, tokenEverSeen: ${this.tokenEverSeen}, disconnectedWasCoordinator: ${disconnectedWasCoordinator}`
+      );
+      
+      // Token might be lost if:
+      // 1. Disconnected node was known to hold the token, OR
+      // 2. Disconnected node was coordinator and token was never seen (initial token holder crashed), OR
+      // 3. Token hasn't been seen for a while
+      const tokenMightBeLost = disconnectedNodeHadToken || 
+                               (disconnectedWasCoordinator && tokenNeverSeen) ||
+                               this._isTokenPotentiallyLost();
+      
+      if (tokenMightBeLost) {
+        console.warn(
+          `[Node ${this.nodeId}] ⚠️ Node ${nodeId} disconnected, token may be lost!`
+        );
+        
+        // Check if we are the successor (next node) of the failed node
+        if (this._amSuccessorOf(nodeId)) {
+          console.log(
+            `[Node ${this.nodeId}] 🔄 I am successor of failed node ${nodeId}, will regenerate token`
+          );
+          // Delay to allow network to stabilize and avoid duplicate tokens
+          setTimeout(() => {
+            if (!this.hasToken && !this.pendingToken && !this._isAnyoneHoldingToken()) {
+              console.log(`[Node ${this.nodeId}] 🆕 Regenerating token after node ${nodeId} failure`);
+              this._receiveToken();
+            }
+          }, 2000);
+        } else if (this._amNewCoordinator()) {
+          // If no successor logic applies and we're now the coordinator, we regenerate
+          console.log(
+            `[Node ${this.nodeId}] 🔄 I am now coordinator after node ${nodeId} failure, will regenerate token`
+          );
+          setTimeout(() => {
+            if (!this.hasToken && !this.pendingToken && !this._isAnyoneHoldingToken()) {
+              console.log(`[Node ${this.nodeId}] 🆕 Regenerating token as new coordinator`);
+              this._receiveToken();
+            }
+          }, 3000); // Slightly longer delay for coordinator fallback
+        }
+=======
     // Check if the disconnected node was holding the token
     // The NEXT node (successor) after the failed node will regenerate the token
     if (
@@ -284,8 +343,82 @@ class TokenRingNode extends EventEmitter {
             this._receiveToken();
           }
         }, 1000);
+>>>>>>> 2ad335a9af52aa7bf7929c3d01a1eda8c76d2176
       }
     }
+  }
+
+  /**
+   * Check if this node is the new coordinator among active nodes
+   */
+  _amNewCoordinator() {
+    const activeNodeIds = Array.from(this.activeNodes);
+    if (activeNodeIds.length === 0) return true;
+    return this.nodeId === Math.min(...activeNodeIds);
+  }
+
+  /**
+   * Check if the token is potentially lost (no node claims to have it recently)
+   */
+  _isTokenPotentiallyLost() {
+    // If token was never seen, it might be lost
+    if (!this.tokenEverSeen) {
+      return false; // Let other conditions handle this case
+    }
+    
+    const now = Date.now();
+    // Token is potentially lost if we haven't seen it for more than 2 token timeouts
+    const timeSinceTokenSeen = now - this.lastTokenSeenAt;
+    return timeSinceTokenSeen > this.tokenTimeout * 2;
+  }
+
+  /**
+   * Check if any active node is known to be holding the token
+   */
+  _isAnyoneHoldingToken() {
+    // If we have the token, yes
+    if (this.hasToken) return true;
+    
+    // If we know who has the token and they're still active, yes
+    if (this.lastKnownTokenHolder !== null && 
+        this.lastKnownTokenHolder !== this.nodeId &&
+        this.activeNodes.has(this.lastKnownTokenHolder)) {
+      // But only if we've seen the token recently
+      const now = Date.now();
+      const timeSinceTokenSeen = now - this.lastTokenSeenAt;
+      if (timeSinceTokenSeen < this.tokenTimeout * 2) {
+        return true;
+      }
+    }
+    
+    return false;
+  }
+
+  /**
+   * Check if this node is the successor (next node) of a given node in the ring
+   */
+  _amSuccessorOf(nodeId) {
+    const failedIndex = this.ringOrder.indexOf(nodeId);
+    if (failedIndex === -1) return false;
+
+    // Find the next active node after the failed node
+    let nextIndex = (failedIndex + 1) % this.ringOrder.length;
+    let attempts = 0;
+
+    while (attempts < this.ringOrder.length) {
+      const candidateId = this.ringOrder[nextIndex];
+      
+      // Skip inactive nodes (but include ourselves)
+      if (this.activeNodes.has(candidateId) || candidateId === this.nodeId) {
+        // This is the successor
+        return candidateId === this.nodeId;
+      }
+      
+      nextIndex = (nextIndex + 1) % this.ringOrder.length;
+      attempts++;
+    }
+
+    return false;
   }
 
   /**
@@ -314,6 +447,9 @@ class TokenRingNode extends EventEmitter {
         break;
       case "token-ack":
         this._handleTokenAck(message);
+        break;
+      case "token-holder-update":
+        this._handleTokenHolderUpdate(message);
         break;
       default:
         console.log(
@@ -348,7 +484,11 @@ class TokenRingNode extends EventEmitter {
     );
     this.stats.tokensReceived++;
     this.lastTokenSeenAt = Date.now();
+<<<<<<< HEAD
+    this.tokenEverSeen = true;
+=======
     this.lastTokenHolder = message.from;
+>>>>>>> 2ad335a9af52aa7bf7929c3d01a1eda8c76d2176
 
     // Ack token receipt so sender knows the token is safe
     this._sendToPeer(message.from, {
@@ -367,8 +507,17 @@ class TokenRingNode extends EventEmitter {
   _receiveToken() {
     this.hasToken = true;
     this.lastTokenSeenAt = Date.now();
+<<<<<<< HEAD
+    this.lastKnownTokenHolder = this.nodeId; // We now hold the token
+    this.tokenEverSeen = true;
+=======
     this.lastTokenHolder = this.nodeId;
+>>>>>>> 2ad335a9af52aa7bf7929c3d01a1eda8c76d2176
     this.emit("token-received");
+
+    // Broadcast to all peers that we now have the token
+    // This ensures all nodes know who has the token for failover
+    this._broadcastTokenHolder();
 
     // Process any queued messages
     this._processMessageQueue();
@@ -377,6 +526,20 @@ class TokenRingNode extends EventEmitter {
     this.tokenTimeoutId = setTimeout(() => {
       this._passToken();
     }, this.tokenTimeout);
+  }
+
+  /**
+   * Broadcast to all peers that this node now holds the token
+   */
+  _broadcastTokenHolder() {
+    for (const peerId of this.connections.keys()) {
+      this._sendToPeer(peerId, {
+        type: "token-holder-update",
+        from: this.nodeId,
+        tokenHolder: this.nodeId,
+        timestamp: Date.now(),
+      });
+    }
   }
 
   /**
@@ -405,7 +568,11 @@ class TokenRingNode extends EventEmitter {
     )}`;
 
     this.lastTokenSeenAt = Date.now();
+<<<<<<< HEAD
+    this.lastKnownTokenHolder = nextNode; // Token is being passed to next node
+=======
     this.lastTokenHolder = this.nodeId;
+>>>>>>> 2ad335a9af52aa7bf7929c3d01a1eda8c76d2176
 
     this._sendToPeer(nextNode, {
       type: "token",
@@ -497,6 +664,25 @@ class TokenRingNode extends EventEmitter {
       console.log(`[Node ${this.nodeId}] Node ${message.from} is back online`);
     }
     this.lastHeartbeat.set(message.from, Date.now());
+
+    // Update token holder info from heartbeat
+    if (message.hasToken) {
+      this.lastKnownTokenHolder = message.from;
+      this.lastTokenSeenAt = Date.now();
+      this.tokenEverSeen = true;
+    }
+  }
+
+  /**
+   * Handle token holder update - another node is announcing it has the token
+   */
+  _handleTokenHolderUpdate(message) {
+    console.log(
+      `[Node ${this.nodeId}] 📢 Token holder update: Node ${message.tokenHolder} now has the token`
+    );
+    this.lastKnownTokenHolder = message.tokenHolder;
+    this.lastTokenSeenAt = Date.now();
+    this.tokenEverSeen = true;
   }
 
   /**
@@ -583,6 +769,7 @@ class TokenRingNode extends EventEmitter {
       this._sendToPeer(peerId, {
         type: "heartbeat",
         from: this.nodeId,
+        hasToken: this.hasToken, // Include token status in heartbeat
         timestamp: Date.now(),
       });
     }
@@ -626,10 +813,58 @@ class TokenRingNode extends EventEmitter {
     }
 
     const now = Date.now();
-    if (now - this.lastTokenSeenAt < this.tokenLossThresholdMs) {
+    
+    // Determine if we should check for token loss
+    let shouldCheck = false;
+    let reason = "";
+    
+    if (this.tokenEverSeen) {
+      // Token was seen before - check if it's been too long
+      const timeSinceTokenSeen = now - this.lastTokenSeenAt;
+      
+      // Use shorter threshold if the last known token holder is no longer active
+      let effectiveThreshold = this.tokenLossThresholdMs;
+      const lastHolderStillActive = this.lastKnownTokenHolder !== null && 
+                                     this.activeNodes.has(this.lastKnownTokenHolder);
+      
+      if (!lastHolderStillActive && this.lastKnownTokenHolder !== this.nodeId) {
+        // Token holder may have crashed - use shorter threshold (2x token timeout)
+        effectiveThreshold = this.tokenTimeout * 2;
+      }
+      
+      if (timeSinceTokenSeen >= effectiveThreshold) {
+        shouldCheck = true;
+        reason = `Token not seen for ${timeSinceTokenSeen}ms (threshold: ${effectiveThreshold}ms)`;
+      }
+    }
+    
+    if (!shouldCheck) {
       return;
     }
 
+<<<<<<< HEAD
+    // If we know who had the token last, only successor regenerates
+    // Otherwise fall back to coordinator
+    let shouldRegenerate = false;
+
+    if (this.lastKnownTokenHolder !== null && this.lastKnownTokenHolder !== this.nodeId) {
+      // If last known holder is inactive, their successor should regenerate
+      if (!this.activeNodes.has(this.lastKnownTokenHolder)) {
+        shouldRegenerate = this._amSuccessorOf(this.lastKnownTokenHolder);
+      }
+    }
+    
+    // Fallback: if no one regenerated and we're the coordinator among active nodes, do it
+    if (!shouldRegenerate && this._amNewCoordinator()) {
+      shouldRegenerate = true;
+    }
+
+    if (!shouldRegenerate) {
+      return;
+    }
+
+    console.warn(`[Node ${this.nodeId}] ${reason}, regenerating`);
+=======
     const regenCandidate = this._nextActiveAfter(this.lastTokenHolder);
     if (regenCandidate !== this.nodeId) {
       return;
@@ -638,8 +873,8 @@ class TokenRingNode extends EventEmitter {
     console.warn(
       `[Node ${this.nodeId}] Token not seen for ${this.tokenLossThresholdMs}ms, regenerating as successor`
     );
+>>>>>>> 2ad335a9af52aa7bf7929c3d01a1eda8c76d2176
     this._receiveToken();
-    this.lastTokenSeenAt = Date.now();
   }
 
   _nextActiveAfter(nodeId) {
